@@ -67,3 +67,5 @@ src/utils/dataset/__pycache__/dataset.cpython-38.pyc
 src/utils/setting/__pycache__/config.cpython-38.pyc
 __pycache__/main.cpython-38.pyc
 /ckpts
+src_logs
+data
