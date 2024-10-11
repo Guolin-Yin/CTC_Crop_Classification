@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import datetime
 
 import torch
-
+import numpy as np
 from model.CNN import CNNModel
 from model.Medianformer import Medianformer
 from model.TFCNN import TFCNN
@@ -172,27 +172,66 @@ def get_callbacks(run_path):
     callbacks += [early_stop_callback, ckp_saver, lr_monitor,]
 
     return callbacks
-def custom_collate_fn(batch):
-
-    # Separate data and labels
-    # Separate data, time, labels, and paths
-    data = [torch.from_numpy(item['data']).float()  for item in batch]
+def extract_to_batched(batch):
+    data = [torch.from_numpy(item['data']).float() for item in batch]
     time = [torch.from_numpy(item['time']) for item in batch]
-    labels = [torch.from_numpy(item['label']).long() for item in batch]
+    # labels = [torch.from_numpy(item['label']).long() for item in batch]
+    labels = torch.tensor(np.array([item['label'] for item in batch])).long()
     paths = [item['path'] for item in batch]
     
-    
-    # Concatenate data along the first dimension
     data_concatenated = torch.cat(data, dim=0)
-    
-    # Stack labels into a tensor
-    labels_tensor = torch.cat(labels,dim=0)
+    time_concatenated = torch.stack(time, dim=0)
+    # labels_tensor = torch.cat(labels,dim=0)
     
     return {
         'data': data_concatenated,
-        'time': time[0][0:1],
-        'label': labels_tensor,
+        'time': time_concatenated,
+        'label': labels,
         }
+def preprocess_collate(batch):
+    for sample in batch:
+        data = sample['data']  # Shape (472, 15, 12)
+        # Efficiently compute features for the entire sample's data
+        new_data = compute_features_batch(data)
+        
+        # Replace the original 12-band data with the new computed 10-feature data
+        sample['data'] = new_data
+    return extract_to_batched(batch)
+
+def compute_features_batch(data):
+    """
+    Function to compute the 10 features for the entire data array in one go.
+    Input: data is of shape (472, 15, 12), where 12 corresponds to the 12 Sentinel-2 bands
+    Output: features is of shape (472, 15, 10), corresponding to the 10 computed features
+    """
+    # Extract the necessary bands for computation
+    B02 = data[:, :, 1]   # Blue
+    B03 = data[:, :, 2]   # Green
+    B04 = data[:, :, 3]   # Red
+    B05 = data[:, :, 4]   # Red Edge 1
+    B06 = data[:, :, 5]   # Red Edge 2
+    B07 = data[:, :, 6]   # Red Edge 3
+    B08 = data[:, :, 7]   # NIR
+    B11 = data[:, :, 10]  # SWIR1
+    B12 = data[:, :, 11]  # SWIR2
+
+    # Compute the features for the entire data array
+    NDVI = (B08 - B04) / (B08 + B04 + 1e-6)  # Add small value to avoid division by zero
+    EVI = 2.5 * (B08 - B04) / (B08 + 6 * B04 - 7.5 * B02 + 1 + 1e-6)
+    ChlRe = (B08 - B05) / (B08 + B05 + 1e-6)
+    REPO = (B05 + B06 + B07) / 3  # Simplified Red Edge Position computation
+    Ferrous = B11 / (B12 + 1e-6)  # Add small value to avoid division by zero
+    Veg_Moisture = (B08 - B11) / (B08 + B11 + 1e-6)
+    NDMI = (B08 - B11) / (B08 + B11 + 1e-6)
+    NDWI = (B03 - B08) / (B03 + B08 + 1e-6)
+    NDCI = (B05 - B04) / (B05 + B04 + 1e-6)
+    MCARI = ((B05 - B04) / (B05 + B04 + 1e-6)) - 0.2 * ((B05 - B03) / (B05 + B03 + 1e-6))
+
+    # Stack the computed features into a single array (472, 15, 10)
+    features = np.stack([NDVI, EVI, ChlRe, REPO, Ferrous, Veg_Moisture, NDMI, NDWI, NDCI, MCARI], axis=-1)
+    
+    return features
+
 def setup_parser():
         # Parse user arguments
     parser = argparse.ArgumentParser()
@@ -228,6 +267,8 @@ def setup_parser():
                              help='Dimension of each attention head. Default 64')
     parser.add_argument('--mlp_dim', type=int, default=64, required=False,
                              help='Dimension of the MLP. Default 64')
+    # dim = 10
+    parser.add_argument('--dim', type=int, default=12, required=False,)
     return parser
 if __name__ == '__main__':
     parser = setup_parser()
@@ -253,25 +294,18 @@ if __name__ == '__main__':
                     'learning_rate'   : args.lr,
                     'method'           : 'one_pixel',
     }
-    # if args.resume:
-    #     # Restore optimizer's learning rate
-    #     with open(run_path / 'lrs.txt', 'r') as f:
-    #         for line in f:
-    #             epoch_lr = line.strip().split(': ')
-    #             if int(epoch_lr[0]) == init_epoch:
-    #                 init_learning_rate = float(epoch_lr[1])
-    #     train_config['learning_rate'] = init_learning_rate
+
 
     if args.model == 'cnn':
         model = CNNModel(train_config = train_config)
         if args.load_checkpoint:
             model = model.load_from_checkpoint(args.load_checkpoint, train_config=train_config)
     elif args.model == 'tfcnn':
-        model_configs =  {'dim': 12, # The number of bands
-                          'depth': args.depth, 
-                          'heads': args.heads, 
-                          'dim_head': args.dim_head, 
-                          'mlp_dim': args.mlp_dim}
+        model_configs =  {'dim'     : args.dim, # The number of bands
+                          'depth'   : args.depth,
+                          'heads'   : args.heads,
+                          'dim_head': args.dim_head,
+                          'mlp_dim' : args.mlp_dim}
         model = TFCNN(**model_configs, train_config = train_config)
         if args.load_checkpoint:
             version = 0
@@ -280,7 +314,8 @@ if __name__ == '__main__':
             # Add a constructor for unknown or unsupported tags
             hparams = read_yaml(cfg_path)
             train_config.update(hparams['train_config'])
-            train_config['run_path'] = '/'.join(train_config['run_path'])
+            train_config['run_path'] = Path(args.load_checkpoint).parent.parent
+            # train_config['run_path'] = '/'.join(train_config['run_path'])
             train_config['checkpoint_epoch'] = init_epoch
             hparams.pop('train_config')
             model_configs.update(hparams)
@@ -305,7 +340,8 @@ if __name__ == '__main__':
             model = model.load_from_checkpoint(args.load_checkpoint, **model_configs, train_config=train_config)
 
     model = model.to(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
-    dm = get_data_module(args, None)
+    dm = get_data_module(args, preprocess_collate)
+    # dm = get_data_module(args, None)
 
     if args.train:
 
@@ -313,7 +349,6 @@ if __name__ == '__main__':
 
         trainer = pl.Trainer(
                               gpus                      = 1,
-                            #   num_nodes                 = args.num_nodes,
                               progress_bar_refresh_rate = 10000,
                               min_epochs                = 1,
                               max_epochs                = max_epoch + 1,
@@ -322,9 +357,7 @@ if __name__ == '__main__':
                               precision                 = 32,
                               callbacks                 = callbacks,
                               logger                    = pl_loggers.TensorBoardLogger(run_path / 'tensorboard'),
-                            #   gradient_clip_val         = 10.0,
                               checkpoint_callback       = True,
-                            #   resume_from_checkpoint    = resume_from_checkpoint,
                              )
 
         # Train model

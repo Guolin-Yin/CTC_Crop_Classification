@@ -1,5 +1,6 @@
 from einops import repeat
 from model.TSViT.TSViTdense import Transformer
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,6 +15,8 @@ from matplotlib.patches import Rectangle
 from torch.optim import lr_scheduler
 from pathlib import Path
 from utils.tools import update_confusion_matrix, on_test_epoch_end
+from sklearn.metrics import roc_curve, auc
+import os
 class TFCNN(pl.LightningModule):
     def __init__(self, 
                 dim, depth, heads, dim_head, mlp_dim,
@@ -23,7 +26,12 @@ class TFCNN(pl.LightningModule):
         self._init_train_params(train_config)
 
         self.dim = dim
-
+        if self.dim == 12:
+            self.classifier_dim = 64 * 7 * 2  
+        elif self.dim == 10:
+            self.classifier_dim = 64 * 6 * 2
+        else:
+            raise ValueError('Invalid dim value. Please use either 10 or 12')
         self.temporal_token = nn.Parameter(torch.randn(1, self.num_classes, dim))
         self.tem_transformer = Transformer(dim, depth, heads, dim_head, mlp_dim)
         self.to_temporal_embedding_input = nn.Linear(366, dim)
@@ -47,7 +55,8 @@ class TFCNN(pl.LightningModule):
         
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(64 * 7 * 2, 128),  # Adjusted to match the output size of the last pooling layer
+            # nn.Linear(64 * 7 * 2, 128),  # for dim =12
+            nn.Linear(self.classifier_dim, 128),  # Adjusted to match the output size of the last pooling layer
             nn.ReLU(),
             nn.Linear(128, self.num_classes),
             # nn.Softmax(dim=1)
@@ -80,6 +89,9 @@ class TFCNN(pl.LightningModule):
         self.confusion_matrix = torch.zeros((self.num_classes, self.num_classes)).to('cuda')
 
         self.run_path = Path(train_config['run_path'])
+
+        self.pred_all = []
+        self.label_all = []
     def _get_temporal_position_embeddings(self, t):
         t = (t * 365.0001).to(torch.int64)
         t = F.one_hot(t, num_classes=366).to(torch.float32)
@@ -94,7 +106,7 @@ class TFCNN(pl.LightningModule):
 
         x += temporal_pos_embedding
 
-        x = self.tem_transformer(x.squeeze(0)) 
+        x = self.tem_transformer(x) 
 
         x = self.features(x[...,None])
 
@@ -118,12 +130,12 @@ class TFCNN(pl.LightningModule):
 
     def _common_step(self, batch, batch_idx):
         inputs = batch['data'].float()  # (B, p, T, C, 1)
-        time = batch['time']  # (B, T)
-        label = batch['label'].to(torch.long).squeeze()  # (B,)
+        time = batch['time']  # (1, T) or (1,pixels, T)    
+        label = batch['label'].to(torch.long).squeeze()  # 0D tensor
 
         pred = self(inputs, time)  # (B, K (the number of categories), H, W)
 
-        if label.dim() == 0:
+        if label.dim() == 0 or label.size(0) == 1:
             label = torch.full((pred.size(0),), label, dtype=torch.long).to('cuda')
 
         loss = self.lossfunction(pred, label)
@@ -168,15 +180,48 @@ class TFCNN(pl.LightningModule):
 
         # Clear list to track next epoch
         self.epoch_valid_losses = []
+    # def test_step(self, batch, batch_idx):
+    #     pred, loss, label, inputs = self._common_step(batch, batch_idx)
+
+    #     # for binary
+    #     # pred = (pred > 0.5).float()
+    #     pred = pred.mean(dim=0).argmax()
+    #     label = label[0]
+
+    #     self.confusion_matrix = update_confusion_matrix(self.confusion_matrix, label.view(-1), pred.view(-1))
+
+    #     p = pred.view(-1).cpu().detach().numpy()
+    #     l = label.view(-1).cpu().detach().numpy()
+        
+    #     p_binary = np.where(p < 7, 1, 0)
+    #     l_binary = np.where(l < 7, 1, 0)
+
+    #     self.pred_all.append(p_binary)
+    #     self.label_all.append(l_binary)
     def test_step(self, batch, batch_idx):
+        # Obtain predictions, loss, and labels from the common step function
         pred, loss, label, inputs = self._common_step(batch, batch_idx)
 
-        # for binary
-        # pred = (pred > 0.5).float()
-        pred = pred.mean(dim=0).argmax()
-        label = label[0]
+        # Do not convert pred into hard labels (keep them as probabilities)
+        # pred = pred.mean(dim=0).argmax()  # Comment this line out
 
-        self.confusion_matrix = update_confusion_matrix(self.confusion_matrix, label.view(-1), pred.view(-1))
+        # For each sample, obtain the probability for CTC (classes < 7) and Non-CTC (classes >= 7)
+        p_probs = pred.mean(dim=0)  # Keep the soft predictions
+
+        # Convert label (ground truth) into binary classification
+        label = label[0]
+        l_binary = np.where(label.view(-1).cpu().detach().numpy() < 7, 1, 0)  # 1 for CTC, 0 for Non-CTC
+
+        # Compute probabilities for CTC: Summing probabilities of classes < 7 for binary ROC
+        ctc_prob = np.array([p_probs[:7].sum().cpu().detach().numpy()])  # This gives the probability that the sample is CTC
+
+        # Ensure both ctc_prob and l_binary are 1D arrays before appending
+        self.pred_all.append(ctc_prob)  # Append probability of being CTC
+        self.label_all.append(np.array([l_binary]))  # Append binary label (ground truth)
+
+        # Update the confusion matrix with hard predictions (for other metrics)
+        pred_hard = p_probs.argmax()  # Use hard label for confusion matrix
+        self.confusion_matrix = update_confusion_matrix(self.confusion_matrix, label.view(-1), pred_hard.view(-1))
     def test_epoch_end(self, outputs):
 
         self.confusion_matrix = self.confusion_matrix.cpu().detach().numpy()
@@ -184,3 +229,28 @@ class TFCNN(pl.LightningModule):
         # save_dir.mkdir(parents=True, exist_ok=True)
         
         on_test_epoch_end(self.run_path, self.checkpoint_epoch, self.confusion_matrix, self.linear_encoder)
+
+
+            # Concatenate all predictions and labels collected during testing
+        predictions = np.concatenate(self.pred_all)
+        labels = np.concatenate(self.label_all)
+
+        # Compute the ROC curve and AUC
+        fpr, tpr, thresholds = roc_curve(labels, predictions)
+        roc_auc = auc(fpr, tpr)
+
+        # Plot ROC Curve
+        plt.figure(figsize=(6, 6))
+        plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC Curve (AUC = {roc_auc:.2f})')
+        plt.plot([0, 1], [0, 1], 'k--', lw=2)  # Diagonal line for random classifier
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.title('ROC Curve for CTC vs Non-CTC')
+        plt.legend(loc="lower right")
+
+        # Save ROC plot to the run_path
+        roc_plot_path = os.path.join(self.run_path, f'roc_curve_epoch_{self.checkpoint_epoch}.png')
+        plt.savefig(roc_plot_path)  # Save the plot to the specified directory
+        plt.close() 

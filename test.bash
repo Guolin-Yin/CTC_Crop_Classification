@@ -2,4 +2,4 @@
 
 python main_train_test.py \
                         --model 'tfcnn' \
-                        --load_checkpoint logs/tfcnn/tf-cnn-clean-ds-shuffled/run_20240929083956/checkpoints/epoch=39-val_loss=1.47.ckpt
+                        --load_checkpoint logs/tfcnn/tf-cnn-clean-ds-shuffled/Best_model/checkpoints/epoch=36-val_loss=1.48.ckpt

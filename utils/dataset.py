@@ -21,7 +21,7 @@ class CTCdataset(Dataset):
         self.mode = mode
         self.data_paths = list(data_dir.glob(f'{mode}/**/*_data.npy'))
         assert len(self.data_paths) > 0, 'No data'
-        self.filter_data()
+        # self.filter_data()
     def filter_data(self):
         if self.mode == 'train':
             self.n_samples = 2000+1
@@ -54,7 +54,8 @@ class CTCdataset(Dataset):
         time = np.load(time_path)
 
 
-        return {'data':normalize_img(data) ,'time':time,'label':LINEAR_ENCODER[label], 'path':str(data_path)}
+        # return {'data':normalize_img(data) ,'time':time,'label':LINEAR_ENCODER[label], 'path':str(data_path)}
+        return {'data':data ,'time':time,'label':LINEAR_ENCODER[label], 'path':str(data_path)}
 
 
 class CTCdataset_train(Dataset):
@@ -77,4 +78,5 @@ class CTCdataset_train(Dataset):
         time  = np.load(time_path)
 
 
-        return {'data':normalize_img(data) ,'time':time,'label':label, 'path':str(data_path)}
+        return {'data':data ,'time':time,'label':label, 'path':str(data_path)}
+        # return {'data':normalize_img(data) ,'time':time,'label':label, 'path':str(data_path)}

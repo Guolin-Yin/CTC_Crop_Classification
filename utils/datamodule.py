@@ -47,7 +47,7 @@ class CTCDataModule(pl.LightningDataModule):
             shuffle     = False,
             num_workers = self.num_workers,
             pin_memory  = True,
-            # collate_fn=self.collate_fn
+            collate_fn=self.collate_fn
         )
 
     def test_dataloader(self):
@@ -57,5 +57,5 @@ class CTCDataModule(pl.LightningDataModule):
             shuffle     = False,
             num_workers = self.num_workers,
             pin_memory  = True,
-            # collate_fn=self.collate_fn
+            collate_fn=self.collate_fn
         )
