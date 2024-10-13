@@ -201,8 +201,8 @@ def preprocess_collate(batch):
 def compute_features_batch(data):
     """
     Function to compute the 10 features for the entire data array in one go.
-    Input: data is of shape (472, 15, 12), where 12 corresponds to the 12 Sentinel-2 bands
-    Output: features is of shape (472, 15, 10), corresponding to the 10 computed features
+    Input: data is of shape (p, 15, 12), where 12 corresponds to the 12 Sentinel-2 bands
+    Output: features is of shape (p, 15, 10), corresponding to the 10 computed features
     """
     # Extract the necessary bands for computation
     B02 = data[:, :, 1]   # Blue

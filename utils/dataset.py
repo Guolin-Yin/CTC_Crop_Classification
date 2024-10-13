@@ -54,8 +54,8 @@ class CTCdataset(Dataset):
         time = np.load(time_path)
 
 
-        # return {'data':normalize_img(data) ,'time':time,'label':LINEAR_ENCODER[label], 'path':str(data_path)}
-        return {'data':data ,'time':time,'label':LINEAR_ENCODER[label], 'path':str(data_path)}
+        return {'data':normalize_img(data) ,'time':time,'label':LINEAR_ENCODER[label], 'path':str(data_path)}
+        # return {'data':data ,'time':time,'label':LINEAR_ENCODER[label], 'path':str(data_path)}
 
 
 class CTCdataset_train(Dataset):
@@ -78,5 +78,5 @@ class CTCdataset_train(Dataset):
         time  = np.load(time_path)
 
 
-        return {'data':data ,'time':time,'label':label, 'path':str(data_path)}
-        # return {'data':normalize_img(data) ,'time':time,'label':label, 'path':str(data_path)}
+        # return {'data':data ,'time':time,'label':label, 'path':str(data_path)}
+        return {'data':normalize_img(data) ,'time':time,'label':label, 'path':str(data_path)}

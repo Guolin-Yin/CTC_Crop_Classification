@@ -51,7 +51,7 @@
 
 
 # Define arguments
-PREFIX='preprocessed'
+PREFIX='preprocessed_normalised'
 NUM_EPOCHS=300
 BATCH_SIZE=1
 LR=0.0001
@@ -79,4 +79,5 @@ python main_train_test.py \
                         --dim_head "$DIM_HEAD" \
                         --mlp_dim "$MLP_DIM" \
                         --dim "$DIM" \
+                        --load_checkpoint logs/tfcnn/preprocessed_normalised/run_2024-10-11-16h-06:30/checkpoints/epoch=82-val_loss=1.56.ckpt \
                         >> "$LOG_FILE" 2>&1 &

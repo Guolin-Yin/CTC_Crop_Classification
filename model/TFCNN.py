@@ -107,6 +107,7 @@ class TFCNN(pl.LightningModule):
         x += temporal_pos_embedding
 
         x = self.tem_transformer(x) 
+        # x = self.tem_transformer(x.squeeze(0)) 
 
         x = self.features(x[...,None])
 
